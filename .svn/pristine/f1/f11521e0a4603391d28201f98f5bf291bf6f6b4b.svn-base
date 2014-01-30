@@ -1,0 +1,1839 @@
+
+#include <EEPROM.h>
+#include <Wire.h>
+
+#if defined(ARDUINO) && ARDUINO >= 100
+#include "Arduino.h"
+#else
+#include "WProgram.h"
+#endif
+#include "lamp.h"
+
+#pragma region Core
+
+Lamp::Lamp(unsigned char ledPin, unsigned char audioPin)
+{
+ getDate();
+  _menuIndex =0x0;
+  _menuDepth = 0;
+
+  this->lpin = ledPin;
+  this->audPin = audioPin;
+  this->LEDCycleRising = true;
+  this->LEDPWM = 0;
+  this->cycleStep = 1;  
+  this->_sleeping = false;
+  this->_lampOn = false;
+  fadeTimer = Metro(1);
+  audioTimer = Metro(1);
+
+  //Default Values if Lamp is starting for the first time
+  if (!isInit())
+  {
+    setDisplayMode(0x1);
+    setAlarmAM(true);
+    setAlarmHour(7);
+    setAlarmMin(30);
+    setAlarmOn(false);
+
+    setAudioFadeSpeed(25);
+    //setLCDBrightness(255);
+    setLampBrightness(128);
+    setCycleFadeTime(15);
+    setCycleHoldTime(15);
+    setCycleSteps(15);
+    setRandomFadeTime(15);
+    setRandomHoldTime(15);
+    setLCDSleepTime(15);
+    setColorHue(150);
+    setColorSat(150);
+
+  }
+  //init the time from eeprom
+ 
+
+ 
+ // if (getClockAMAdj()==true)  setTime(getClockHourAdj()+12,getClockMinAdj(),0,getClockDayAdj(),getClockMonthAdj(),getClockYearAdj()+2000);
+  //backLightBr(getLCDBrightness());
+  //  Wake();
+  
+  drawMenu(menuPosition());
+}
+
+
+
+bool Lamp::isInit()
+{
+  return (EEPROM.read(_defaultSettings) != 0xFF);
+}
+
+bool Lamp::isSleeping()
+{
+  return this->_sleeping;
+}
+
+bool Lamp::isLampOn()
+{
+  return this->_lampOn;
+}
+
+void Lamp::doLed()
+{
+  analogWrite(lpin,getColorHue()+ _currentHue);
+}
+
+void Lamp::update()
+{ 
+ // drawMenu(menuPosition());
+  
+doLed();
+
+  if (millis()%1000 == 999)
+  {
+    _idleTime++;
+
+    drawMenu(menuPosition());
+    if (_idleTime==10)  updateMenuIndex('t');
+  }
+
+  switch (getDisplayMode())
+  {
+  case lAUDIO:
+    drawAudio();
+    break;
+  case lCYCLE:
+    drawCycle();
+    break;
+  case lRANDOM:
+    drawRandom();
+    break;
+  case lSOLID:
+    drawSolid();
+    break;
+  default:
+    break;
+  }
+
+
+
+}
+
+void Lamp::readSerial(char data[],unsigned char buffLen)
+{
+  _idleTime=0;
+  char rxData [buffLen];  
+  for (int i=0; i<= buffLen -1; i++)
+  {
+    rxData[i] = data[i];
+  }
+
+  if (_sleeping)
+  {
+    if (strcmp(rxData,"t") ==0) LampStatus(!isLampOn());
+    else  Wake();
+  }
+  else
+  {
+    if (strcmp(rxData,"idx") ==0) Serial.println(menuPosition(),HEX);
+    else if (strcmp(rxData,"c") ==0) updateMenuIndex('c');
+    else if (strcmp(rxData,"lmp") ==0) LampStatus(!isLampOn());
+    else if (strcmp(rxData,"h") ==0) updateMenuIndex('h');
+    else if (strcmp(rxData,"l") ==0) updateMenuIndex('l');
+    else if (strcmp(rxData,"r") ==0) updateMenuIndex('r');
+    else if (strcmp(rxData,"t") ==0) updateMenuIndex('t');
+    else if (strcmp(rxData,"dmp")==0) eepromDmp();
+    else if (strcmp(rxData,"dsp")==0) toggleDSP();
+  }
+}
+
+void Lamp::toggleDSP()
+{
+  this->_dsp = !_dsp;
+}
+
+void Lamp::eepromDmp()
+{/*
+  Serial1.println("--EEPROM DMP--");
+ 
+ Serial1.print("isInit:");
+ Serial1.println(isInit());
+ Serial1.print("getDisplayMode:");
+ Serial1.println(getDisplayMode());
+ Serial1.print("getAudioFadeSpeed:");
+ Serial1.println(getAudioFadeSpeed());
+ Serial1.print("getLCDBrightness:");
+ Serial1.println(getLCDBrightness());
+ Serial1.print("getLampBrightness:");
+ Serial1.println(getLampBrightness());
+ Serial1.print("getCycleFadeTime:");
+ Serial1.println(getCycleFadeTime());
+ Serial1.print("getCycleHoldTime:");
+ Serial1.println(getCycleHoldTime());
+ Serial1.print("getRandomFadeTime:");
+ Serial1.println(getRandomFadeTime());
+ Serial1.print("getRandomHoldTime:");
+ Serial1.println(getRandomHoldTime());
+ Serial1.print("getLCDSleepTime:");
+ Serial1.println(getLCDSleepTime());
+ Serial1.print("getColorHue:");
+ Serial1.println(getColorHue());
+ Serial1.print("getColorSat:");
+ Serial1.println(getColorSat());
+ Serial1.print("getAlarmAM:");
+ Serial1.println(getAlarmAM());  
+ Serial1.print("getAlarmHour:");
+ Serial1.println(getAlarmHour());  
+ Serial1.print("getAlarmMin:");
+ Serial1.println(getAlarmMin());  
+ Serial1.print("getAlarmOn:");
+ Serial1.println(getAlarmOn());  
+ Serial1.println("--------------");
+ */
+}
+
+unsigned long Lamp::menuPosition()
+{
+  return this->_menuIndex;
+}
+
+unsigned char Lamp::menuDepth()
+{
+  return this->_menuDepth;
+}
+
+void Lamp::updateMenuIndex(unsigned char dir)
+{
+  switch (dir)
+  {
+  case 't':
+    //top
+    this->_menuIndex=0x0;
+    this->_menuDepth=0x0;
+    _idleTime=0;
+
+  case 'c':
+    //set time
+ 
+    if(menuPosition()==0x0)   break;
+    if (menuPosition()==0x1111 || menuPosition()==0x2111 || menuPosition()==0x3111 || menuPosition()==0x1211 || menuPosition()==0x2211 || menuPosition()==0x3211 || menuPosition()==0x4211)
+    {
+
+
+      if (menuPosition() == 0x3111) this->_menuIndex = 0x1111;
+      else if (menuPosition() == 0x4211)  this->_menuIndex = 0x2211;
+      else this->_menuIndex = this->_menuIndex + (1 << menuDepth());
+      break;
+    } 
+    //set alarm
+    if (menuPosition()==0x1121 || menuPosition()==0x2121 || menuPosition()==0x3121 || menuPosition()==0x1221)
+    {
+      if (menuPosition() == 0x3121) this->_menuIndex = 0x1121;
+      else if (menuPosition() == 0x1221)  this->_menuIndex = 0x1221;
+      else this->_menuIndex = this->_menuIndex + (1 << menuDepth());
+      break;
+    }
+
+    //brightness / LCD backlight / lcd sleep time
+    if (menuPosition() == 0x122 || menuPosition() == 0x132 || menuPosition() == 0x142) {
+      break;
+    }
+
+    //AudioViz
+    if (menuPosition()==0x1112) break;
+    if (menuPosition()==0x12)
+    {
+      this->_menuDepth +=4;
+      //ignore 0x112  replace with 0x212;
+      if (getDisplayMode()==0) this->_menuIndex = 0x212;
+      if (getDisplayMode()==1) this->_menuIndex = 0x212;
+      if (getDisplayMode()==2) this->_menuIndex = 0x312;
+      if (getDisplayMode()==3) this->_menuIndex = 0x412;
+
+      break;
+    }
+
+    //Cycle
+    if (menuPosition()==0x1212 || menuPosition()==0x2212 || menuPosition()==0x3212)
+    {
+      if (menuPosition() == 0x1212) this->_menuIndex = 0x2212;
+      else if (menuPosition() == 0x2212) this->_menuIndex = 0x3212;
+      else if (menuPosition() == 0x3212) this->_menuIndex = 0x1212;
+      break;
+    }
+
+    //Random
+    if (menuPosition()==0x1312 || menuPosition()==0x2312)
+    {
+      if (menuPosition() == 0x1312) this->_menuIndex = 0x2312;
+      else if (menuPosition() == 0x2312) this->_menuIndex = 0x1312;
+      break;
+    }
+
+    //Solid
+    if (menuPosition()==0x1412 || menuPosition()==0x2412)
+    {
+      if (menuPosition() == 0x1412) this->_menuIndex = 0x2412;
+      else if (menuPosition() == 0x2412) this->_menuIndex = 0x1412;
+      break;
+    }
+
+    this->_menuDepth +=4;
+    this-> _menuIndex = this->_menuIndex + (1 << menuDepth());
+
+    //ignore set weekday
+    // if (menuPosition() == 0x1211) this->_menuIndex = 0x2211;
+
+
+    break;
+  case 'h':  
+    if (menuDepth() == 0x0)
+    {
+      this->_menuIndex=0x0;
+      break;
+    } 
+    this->_menuIndex =this->_menuIndex - (this->_menuCurrent << menuDepth());
+    this->_menuDepth -=4;
+
+    break;
+
+    //Going Left
+  case 'l':
+
+    //Clock
+    if (menuPosition()==0x1111 || menuPosition()==0x2111 || menuPosition()==0x3111 || menuPosition()==0x1211 || menuPosition()==0x2211 || menuPosition()==0x3211 || menuPosition()==0x4211)
+    {
+
+      
+      if (menuPosition()==0x01111 && tHour >0 ) tHour-- ; else if (menuPosition()==0x01111 && tHour ==0 ) tHour = 23;  //hour
+      if (menuPosition()==0x02111 && tMinute >0 ) tMinute-- ; else if (menuPosition()==0x02111 && tMinute ==0 ) tMinute = 59;  //min
+      if (menuPosition()==0x03111 && tHour >=12)  tHour-=12; //am
+      if (menuPosition()==0x01211 && tDay>1 ) tDay-- ; else if (menuPosition()==0x01211 && tDay ==1 ) tDate==7; //day
+      if (menuPosition()==0x02211 && tDate >1 ) tDate-- ; else if (menuPosition()==0x02211 && tDate ==1 ) tDate==31; //day
+      if (menuPosition()==0x03211 && tMonth >1 ) tMonth-- ; else if (menuPosition()==0x03211 && tMonth ==1 ) tMonth=12;  //month
+      if (menuPosition()==0x04211 && tYear >0 ) tYear-- ; else if (menuPosition()==0x04211 && tYear ==0 ) tYear=99; //year
+      
+      setDateTime();
+
+      
+      
+      //REWORK this section for when the RTC is attached
+/*
+      if (menuPosition()==0x01111 && getClockHourAdj() >0 ) setClockHourAdj(getClockHourAdj() - 1 ); else if (menuPosition()==0x01111 && getClockHourAdj() ==0 ) setClockHourAdj(23);  //hour
+      if (menuPosition()==0x02111 && getClockMinAdj() >0 ) setClockMinAdj(getClockMinAdj() - 1 ); else if (menuPosition()==0x02111 && getClockMinAdj() ==0 ) setClockMinAdj(59 );  //min
+      if (menuPosition()==0x03111 && getClockHourAdj() >=12)  setClockHourAdj(getClockHourAdj() - 12 ); //am
+      if (menuPosition()==0x02211 && getClockDayAdj() >1 ) setClockDayAdj(getClockDayAdj() - 1 ); else if (menuPosition()==0x02211 && getClockDayAdj() ==1 ) setClockDayAdj(31); //day
+      if (menuPosition()==0x03211 && getClockMonthAdj() >1 ) setClockMonthAdj(getClockMonthAdj() - 1 ); else if (menuPosition()==0x03211 && getClockMonthAdj() ==1 ) setClockMonthAdj(12 );  //month
+      if (menuPosition()==0x04211 && getClockYearAdj() >0 ) setClockYearAdj(getClockYearAdj() - 1 ); else if (menuPosition()==0x04211 && getClockYearAdj() ==0 ) setClockYearAdj(99); //year
+*/
+
+  //   if (getClockAMAdj() == true) setTime(getClockHourAdj() +12 ,getClockMinAdj(),0,getClockDayAdj(),getClockMonthAdj(),getClockYearAdj()+2000);
+  // setTime(getClockHourAdj(),getClockMinAdj(),0,getClockDayAdj(),getClockMonthAdj(),getClockYearAdj()+2000);
+
+
+      break;
+    }
+
+    //Alarm
+    if (menuPosition()==0x1121 || menuPosition()==0x2121 || menuPosition()==0x3121 || menuPosition()==0x1221)
+    {
+      if (menuPosition()==0x1121 && getAlarmHour() >1 ) setAlarmHour(getAlarmHour() - 1 );
+      if (menuPosition()==0x2121 && getAlarmMin() >0 ) setAlarmMin(getAlarmMin() - 1 );
+      if (menuPosition()==0x3121) setAlarmAM(true);
+      if (menuPosition()==0x1221) setAlarmOn(false);
+
+      break;
+    }
+
+    //brightness / LCD backlight / lcd sleep time
+    if (menuPosition() == 0x122 || menuPosition() == 0x132 || menuPosition() == 0x142) {
+
+      if (menuPosition()==0x122 && getLampBrightness()>1) setLampBrightness(getLampBrightness() - 1);
+    //  if (menuPosition()==0x132 && getLCDBrightness()>0) setLCDBrightness(getLCDBrightness() - 1);
+   //   if (menuPosition()==0x142 && getLCDSleepTime()>10) setLCDSleepTime(getLCDSleepTime() - 1);
+
+      break;
+    }
+
+    //AudioViz Fade Speed
+    if (menuPosition()==0x1112)
+    {
+      if (getAudioFadeSpeed() >1 ) setAudioFadeSpeed(getAudioFadeSpeed()-1);
+      break;
+    }
+
+    //Cycle
+    if (menuPosition()==0x1212 || menuPosition()==0x2212 || menuPosition()==0x3212)
+    {
+      if (menuPosition()==0x1212 && getCycleHoldTime() >1 ) setCycleHoldTime(getCycleHoldTime() - 1 );
+      if (menuPosition()==0x2212 && getCycleFadeTime() >1 ) setCycleFadeTime(getCycleFadeTime() - 1 );
+      if (menuPosition()==0x3212 && getCycleSteps()  >1 ) setCycleSteps(getCycleSteps() - 1 );
+
+      break;
+    }
+
+    //Random
+    if (menuPosition()==0x1312 || menuPosition()==0x2312)
+    {
+      if (menuPosition()==0x1312 && getRandomHoldTime() >1 ) setRandomHoldTime(getRandomHoldTime() - 1 );
+      if (menuPosition()==0x2312 && getRandomFadeTime() >1 ) setRandomFadeTime(getRandomFadeTime() - 1 );
+      break;
+    }
+
+    //Solid
+    if (menuPosition()==0x1412 || menuPosition()==0x2412)
+    {
+      if (menuPosition()==0x1412 && getColorHue() >0 ) setColorHue(getColorHue() - 1 );
+      if (menuPosition()==0x2412 && getColorSat() >0 ) setColorSat(getColorSat() - 1 );
+      break;
+    }
+
+    //limits moving left
+    if (menuPosition() == 0x0) this->_menuIndex = 0x2;
+    else if (menuPosition() == 0x11)  this->_menuIndex = 0x21;
+    else if (menuPosition() == 0x111)  this->_menuIndex = 0x211;
+
+    else if (menuPosition() == 0x121)  this->_menuIndex = 0x221;
+    else if (menuPosition() == 0x12)  this->_menuIndex = 0x22;
+    else if (menuPosition() == 0x212)  this->_menuIndex = 0x412;
+    else this->_menuIndex = this->_menuIndex - (1 << menuDepth());
+
+    //Display Mode
+    if (menuPosition() == 0x112) setDisplayMode(0x0);
+    if (menuPosition() == 0x212) setDisplayMode(0x1);
+    if (menuPosition() == 0x312) setDisplayMode(0x2);
+    if (menuPosition() == 0x412) setDisplayMode(0x3);
+
+    break;
+
+    //Going right
+  case 'r':
+
+
+    //Clock
+    if (menuPosition()==0x1111 || menuPosition()==0x2111 || menuPosition()==0x3111 || menuPosition()==0x1211 || menuPosition()==0x2211 || menuPosition()==0x3211 || menuPosition()==0x4211)
+    {
+      
+      if (menuPosition()==0x01111 && tHour <23 ) tHour++ ; else if (menuPosition()==0x01111 && tHour ==23 ) tHour = 0;  //hour
+      if (menuPosition()==0x02111 && tMinute <59 ) tMinute++ ; else if (menuPosition()==0x02111 && tMinute ==59 ) tMinute = 0;  //min
+      if (menuPosition()==0x03111 && tHour <=12)  tHour+=12; //am
+      if (menuPosition()==0x01211 && tDay<7 ) tDay++ ; else if (menuPosition()==0x01211 && tDay ==7 ) tDate==1; //day
+      if (menuPosition()==0x02211 && tDate <31 ) tDate++ ; else if (menuPosition()==0x02211 && tDate ==31 ) tDate==1; //day
+      if (menuPosition()==0x03211 && tMonth <12 ) tMonth++ ; else if (menuPosition()==0x03211 && tMonth ==12 ) tMonth=1;  //month
+      if (menuPosition()==0x04211 && tYear <99 ) tYear++ ; else if (menuPosition()==0x04211 && tYear ==99 ) tYear=0; //year
+      
+      setDateTime();
+
+      
+      //REWORK this section for when the RTC is attached
+
+/*
+      if (menuPosition()==0x01111 && getClockHourAdj() <23 ) setClockHourAdj(getClockHourAdj() + 1 ); else if (menuPosition()==0x01111 && getClockHourAdj() ==23 ) setClockHourAdj(0); //hour
+      if (menuPosition()==0x02111 && getClockMinAdj() <59 ) setClockMinAdj(getClockMinAdj() + 1 ); else if (menuPosition()==0x02111 && getClockMinAdj() ==59 ) setClockMinAdj(0 ); //min
+      if (menuPosition()==0x03111 && getClockHourAdj() <=12)  setClockHourAdj(getClockHourAdj() + 12 );
+      if (menuPosition()==0x02211 && getClockDayAdj() <31 ) setClockDayAdj(getClockDayAdj() + 1 ); else if (menuPosition()==0x02211 && getClockDayAdj() ==31 ) setClockDayAdj(1);//day
+      if (menuPosition()==0x03211 && getClockMonthAdj() <12 ) setClockMonthAdj(getClockMonthAdj() + 1 ); else if (menuPosition()==0x03211 && getClockMonthAdj() ==12 ) setClockMonthAdj(1 );//month
+      if (menuPosition()==0x04211 && getClockYearAdj() <99 ) setClockYearAdj(getClockYearAdj() + 1 ); else if (menuPosition()==0x04211 && getClockYearAdj() ==99 ) setClockYearAdj(0); //year
+
+*/
+    //  if (getClockAMAdj() == true) setTime(getClockHourAdj() +12 ,getClockMinAdj(),0,getClockDayAdj(),getClockMonthAdj(),getClockYearAdj()+2000);
+// setTime(getClockHourAdj(),getClockMinAdj(),0,getClockDayAdj(),getClockMonthAdj(),getClockYearAdj()+2000);
+
+      break;
+    }
+
+    //Alarm
+    if (menuPosition()==0x1121 || menuPosition()==0x2121 || menuPosition()==0x3121 || menuPosition()==0x1221)
+    {
+      if (menuPosition()==0x1121 && getAlarmHour() < 12 ) setAlarmHour(getAlarmHour() + 1 );
+      if (menuPosition()==0x2121 && getAlarmMin() < 59 ) setAlarmMin(getAlarmMin() + 1 );
+      if (menuPosition()==0x3121) setAlarmAM(false);
+      if (menuPosition()==0x1221) setAlarmOn(true);
+
+      break;
+    }
+
+    //brightness / LCD backlight / lcd sleep time
+    if (menuPosition() == 0x122 || menuPosition() == 0x132 || menuPosition() == 0x142) {
+      if (menuPosition()==0x122 && getLampBrightness()<255) setLampBrightness(getLampBrightness() + 1);
+   //   if (menuPosition()==0x132 && getLCDBrightness()<255) setLCDBrightness(getLCDBrightness() + 1);
+      if (menuPosition()==0x142 && getLCDSleepTime()<31) setLCDSleepTime(getLCDSleepTime() + 1);
+
+      //  backLightBr(getLCDBrightness());
+      break;
+    }
+
+
+    //AudioViz Fade Speed
+    if (menuPosition()==0x1112)
+    {
+      if (getAudioFadeSpeed() < 255 ) setAudioFadeSpeed(getAudioFadeSpeed()+1);
+      break;
+    }
+
+    //Cycle
+    if (menuPosition()==0x1212 || menuPosition()==0x2212 || menuPosition()==0x3212)
+    {
+      if (menuPosition()==0x1212 && getCycleHoldTime() <30 ) setCycleHoldTime(getCycleHoldTime() + 1 );
+      if (menuPosition()==0x2212 && getCycleFadeTime() <30 ) setCycleFadeTime(getCycleFadeTime() + 1 );
+      if (menuPosition()==0x3212 && getCycleSteps() <128 ) setCycleSteps(getCycleSteps() + 1 );
+      break;
+    }
+
+    //Random
+    if (menuPosition()==0x1312 || menuPosition()==0x2312)
+    {
+      if (menuPosition()==0x1312 && getRandomHoldTime() <30 ) setRandomHoldTime(getRandomHoldTime() + 1 );
+      if (menuPosition()==0x2312 && getRandomFadeTime() <30) setRandomFadeTime(getRandomFadeTime() + 1 );
+      break;
+    }
+
+    //Solid
+    if (menuPosition()==0x1412 || menuPosition()==0x2412)
+    {
+      if (menuPosition()==0x1412 && getColorHue() <255 ) setColorHue(getColorHue() + 1 );
+      if (menuPosition()==0x2412 && getColorSat() <255 ) setColorSat(getColorSat() + 1 );
+      break;
+    }
+
+
+    //limits moving right
+    if (menuPosition() == 0x2) this->_menuIndex = 0x0;
+    else if (menuPosition() == 0x21)  this->_menuIndex = 0x11;
+    else if (menuPosition() == 0x211)  this->_menuIndex = 0x111;
+    else if (menuPosition() == 0x221)  this->_menuIndex = 0x121;
+    else if (menuPosition() == 0x22)  this->_menuIndex = 0x12;
+    else if (menuPosition() == 0x412)  this->_menuIndex = 0x212;
+    else this->_menuIndex = this->_menuIndex + (1 << menuDepth());
+
+    //Display Mode
+    if (menuPosition() == 0x112) setDisplayMode(0x0);
+    if (menuPosition() == 0x212) setDisplayMode(0x1);
+    if (menuPosition() == 0x312) setDisplayMode(0x2);
+    if (menuPosition() == 0x412) setDisplayMode(0x3);
+
+  default:
+    break;
+  }
+
+  this->_menuCurrent = menuPosition() >> menuDepth();
+
+  drawMenu(menuPosition());
+}
+
+void Lamp::drawMenu(unsigned long index)
+{
+  
+  //Serial.println("Draw");
+  
+  unsigned char almhr;
+  almhr= getAlarmHour();
+  unsigned char almmn;
+  almmn = getAlarmMin();
+  bool almAM;
+  almAM = getAlarmAM();
+  bool almOn;
+  almOn = getAlarmOn();
+  byte dspMode = getDisplayMode();
+  byte lmpbr = getLampBrightness();
+  byte lcdbr = getLCDBrightness();
+  byte lcdsl = getLCDSleepTime();
+  byte audfs = getAudioFadeSpeed();
+  byte cych  = getCycleHoldTime();
+  byte cycf  = getCycleFadeTime();
+  byte cycs  = getCycleSteps();
+  byte rndh  = getRandomHoldTime();
+  byte rndf  = getRandomFadeTime();
+  byte solh  = getColorHue();
+  byte sols  = getColorSat();
+
+  char strSec[] = "sec.";
+  char strON[] = "ON";
+  char strOFF[] = "OFF";
+  char strAM[] = "  AM";
+  char strPM[] = "  PM";
+  char strPad0[] = "0";
+  char strBr[] = "Brightness";
+  char strHT[] = "Hold Time";
+  char strFT[] = "Fade Time";
+  char strST[] = "Steps";
+  char strTimeH[] = "Hour Min AM/PM";
+  char strDateH[] = "d.  D. M.  Y.";
+
+  char* weekdayStr[] = {
+    "","Sun","Mon","Tue","Wed","Thu","Fri","Sat"};  
+  char* monthStr[] = {
+    "","Jan", "Feb", "Mar","Apr","May","Jun", "Jul","Aug", "Sep","Oct","Nov","Dec"};
+
+  goTo(0);
+  hideCursor();
+  clearLCD();
+//  selectLineOne();
+
+  switch (index)
+  {
+  case 0x000000:
+    //Main menu
+    //  Serial1.println("03:28 PM    Alm.");
+    //  Serial1.println("Mon Nov 10 2012 ");
+    if (tHour12 < 10) Serial1.print(strPad0);
+    Serial1.print(tHour12);
+    Serial1.print(":");
+    if (tMinute < 10) Serial1.print(strPad0);
+    Serial1.print(tMinute);
+    if(tHour<12) Serial1.print(strAM);
+    if(tHour>=12)Serial1.print(strPM);
+    if(almOn) Serial1.print("   Alm.");
+    if(!almOn) Serial1.print("");
+    selectLineTwo();
+    Serial1.print(weekdayStr[tDay]);
+    Serial1.print(" ");
+    Serial1.print(monthStr[tMonth]);
+    Serial1.print(" ");
+    Serial1.print(tDate);
+    Serial1.print("  ");
+    Serial1.print(tYear +2000);
+
+    break;
+  case 0x000001:
+    //Clock Settings
+    Serial1.print("Clock Settings");
+    //  Serial1.println("");
+    break;
+  case 0x000002:
+    //Lamp Settings
+    Serial1.print("Lamp Settings");
+    //  selectLineTwo();
+    //  Serial1.println("");
+    break;
+  case 0x000011:
+    //set Date/time top menu
+    Serial1.print("Set Date/Time");
+    selectLineTwo();
+    if (tHour12 < 10) Serial1.print(strPad0);
+    Serial1.print(tHour12);
+    Serial1.print(":");
+    if(tMinute < 10) Serial1.print(strPad0);
+    Serial1.print(tMinute);
+    if(tHour<12) Serial1.print("AM ");
+    if(tHour>=12) Serial1.print("PM ");
+    Serial1.print(tDate);
+    Serial1.print("/");
+    Serial1.print(tMonth);
+    Serial1.print("/");
+    Serial1.print(tYear+2000);
+
+    break;
+  case 0x000012:
+    //Set Display mode top menu
+    Serial1.print("Dispay Mode");
+    selectLineTwo();
+    if (dspMode==0) Serial1.print("Audio Viz.");
+    if (dspMode==1) Serial1.print("Cycle");
+    if (dspMode==2) Serial1.print("Random");
+    if (dspMode==3) Serial1.print("Solid");
+
+    break;
+  case 0x000021:
+    //set Alarm top menu
+    Serial1.print("Set Alarm");
+    selectLineTwo();
+    //Serial1.print("07:00AM      OFF");
+    if (almhr < 10) Serial1.print(strPad0);
+    Serial1.print(almhr);
+    Serial1.print(":");
+    if(almmn < 10) Serial1.print(strPad0);
+    Serial1.print(almmn);
+    if(almAM) Serial1.print(strAM);
+    if(!almAM)Serial1.print(strPM);
+    if(almOn) { 
+      Serial1.print("     "); 
+      Serial1.print(strON);
+    }
+    if(!almOn) {
+      Serial1.print("    "); 
+      Serial1.print(strOFF);
+    }
+
+    break;
+  case 0x000022:
+    //Set Brightness top menu
+    Serial1.print(strBr);
+    selectLineTwo();
+    Serial1.print(lmpbr,DEC);
+    break; 
+  case 0x000032:
+    //set LCD Backlight top menu
+  //  Serial1.print("LCD Backlight");
+ //   selectLineTwo();
+ //   Serial1.print(lcdbr,DEC);
+    break;
+  case 0x000042:
+    //set LCD sleep delay top menu
+    Serial1.print("LCD Sleep");
+    selectLineTwo();
+    if (lcdsl != 31)
+    {
+      Serial1.print(lcdsl,DEC);
+      Serial1.print(strSec);
+    }
+    else
+    {
+      Serial1.print("Never");
+    }
+
+    break;
+  case 0x000111:
+    //set clock time / current time
+    Serial1.print(strTimeH);
+    selectLineTwo();
+    if (tHour12 < 10) Serial1.print(strPad0);
+    Serial1.print(tHour12);
+    Serial1.print("   ");
+    if(tMinute < 10) Serial1.print(strPad0);
+    Serial1.print(tMinute);
+    if(tHour<12) Serial1.print(strAM);
+    if(tHour>=12) Serial1.print(strPM);
+
+    break;
+  case 0x000112:
+    //Audio Viz. display mode
+    Serial1.print("Audio Viz.");
+
+    break;
+  case 0x000121:
+    //set alarm time / current time
+    Serial1.print(strTimeH);
+    selectLineTwo();
+    if (almhr < 10) Serial1.print(strPad0);
+    Serial1.print(almhr);
+    Serial1.print("   ");
+    if(almmn < 10) Serial1.print(strPad0);
+    Serial1.print(almmn);
+    if(almAM) Serial1.print(strAM);
+    if(!almAM) Serial1.print(strPM);
+
+    break;
+  case 0x000122:
+    //Set lamp Brigthness
+    //should display cursor
+    Serial1.print(strBr);
+    selectLineTwo();
+    Serial1.print(lmpbr,DEC);
+
+    showCursor();
+    goTo(18);
+
+    break;
+  case 0x000132:
+    //set lcd backlight brightness
+    //should display cursor
+   // Serial1.print("LCD Backlight");
+  //  selectLineTwo();
+  //  Serial1.print(lcdbr,DEC);
+//
+ //   showCursor();
+ //   goTo(18);
+
+    break;
+  case 0x000142:
+    //set lcd sleep delay
+    //should display cursor
+    Serial1.print("LCD Sleep");
+    selectLineTwo();
+    if (lcdsl != 31)
+    {
+      Serial1.print(lcdsl,DEC);
+      Serial1.print(strSec);
+    }
+    else
+    {
+      Serial1.print("Never");
+    }
+
+    showCursor();
+    goTo(17);
+
+    break;
+  case 0x000211:
+    //set clock date menu
+    Serial1.print(strDateH);
+    selectLineTwo();
+    Serial1.print(weekdayStr[tDay]);
+    Serial1.print(" ");
+    Serial1.print(tDate); 
+    Serial1.print(" ");
+
+    Serial1.print(monthStr[tMonth]);
+    Serial1.print(" ");
+    Serial1.print(tYear);
+    break;
+  case 0x000212:
+    //Cycle display mode
+    Serial1.print("Cycle");
+
+    break;
+  case 0x000221:
+    //set alarm on/off menu
+    Serial1.print("Alarm");
+    selectLineTwo();
+    if (almOn) Serial1.print(strON);
+    if (!almOn) Serial1.print(strOFF);
+    break;
+  case 0x000312:
+    //random color display mode
+    Serial1.print("Random");
+    //  Serial1.print("");
+    break;
+  case 0x000412:
+    //solid color display mode
+    Serial1.print("Solid");
+    // Serial1.print("");
+    break;
+  case 0x001111:
+    //set clock time / set hour
+    //show cursor at hour
+    Serial1.print(strTimeH);
+    selectLineTwo();
+    if (tHour12 < 10) Serial1.print(strPad0);
+    Serial1.print(tHour12);
+    Serial1.print("   ");
+    if(tMinute < 10) Serial1.print(strPad0);
+    Serial1.print(tMinute);
+    if(tHour<12) Serial1.print(strAM);
+    if(tHour>=12) Serial1.print(strPM);
+
+    showCursor();
+    goTo(17);
+
+    break;
+  case 0x001112:
+    //set audio viz fade time
+    //show cursor
+    Serial1.print(strFT);
+
+    Serial1.print(audfs*4,DEC);
+    Serial1.print("ms.");
+    break;
+  case 0x001121:
+    //set alarm time / hour
+    //show cursor at hour
+    Serial1.print(strTimeH);
+    selectLineTwo();
+    if (almhr < 10) Serial1.print(strPad0);
+    Serial1.print(almhr);
+    Serial1.print("   ");
+    if(almmn < 10) Serial1.print(strPad0);
+    Serial1.print(almmn);
+    if(almAM) Serial1.print(strAM);
+    if(!almAM) Serial1.print(strPM);
+
+    showCursor();
+    goTo(17);
+
+    break;
+  case 0x001211:
+    //set clock date / day of week
+    //show cursor at d o w
+
+    Serial1.print(strDateH);
+    selectLineTwo();
+    //Serial1.print("Mon 3_ Dec 12");
+    Serial1.print(weekdayStr[tDay]);
+    Serial1.print(" ");
+    Serial1.print(tDate);
+    Serial1.print(" ");
+    Serial1.print(monthStr[tMonth]);
+    Serial1.print(" ");
+    Serial1.print(tYear);
+
+    showCursor();
+    goTo(18);
+
+    break;
+  case 0x001212:
+    //set Cycle hold time
+    //show cursor
+    Serial1.print(strHT);
+    selectLineTwo();
+    Serial1.print(cych,DEC);
+    Serial1.print(strSec);
+
+    showCursor();
+    goTo(17);
+
+    break;
+  case 0x001221:
+    //set alarm on / off
+    //show cursor
+    Serial1.print("Alarm");
+    selectLineTwo();
+    if (almOn) Serial1.print(strON);
+    if (!almOn) Serial1.print(strOFF);
+
+    showCursor();
+    goTo(18);
+
+    break;
+  case 0x001312:
+    //set random mode holde time
+    //show cursor
+    Serial1.print(strHT);
+    selectLineTwo();
+    Serial1.print(rndh,DEC);
+    Serial1.print(strSec);
+
+    showCursor();
+    goTo(17);
+
+    break;
+  case 0x001412:
+    //set solid mode Hue
+    //show cursor
+    Serial1.print("Hue");
+    selectLineTwo();
+    Serial1.print(solh,DEC);
+
+    showCursor();
+    goTo(19);
+
+    break;
+  case 0x002111:
+    //set clock time / min
+    //show curso at min
+    Serial1.print(strTimeH);
+    selectLineTwo();
+    if (tHour12 < 10) Serial1.print(strPad0);
+    Serial1.print(tHour12);
+    Serial1.print("   ");
+    if(tMinute < 10) Serial1.print(strPad0);
+    Serial1.print(tMinute);
+    if(tHour<12) Serial1.print(strAM);
+    if(tHour>=12) Serial1.print(strPM);
+
+    showCursor();
+    goTo(22);
+
+    break;
+  case 0x002121:
+    //set alarm time / min
+    //show cursor at min
+    Serial1.print(strTimeH);
+    selectLineTwo();
+    if (almhr < 10) Serial1.print(strPad0);
+    Serial1.print(almhr);
+    Serial1.print("   ");
+    if(almmn < 10) Serial1.print(strPad0);
+    Serial1.print(almmn);
+    if(almAM) Serial1.print(strAM);
+    if(!almAM)Serial1.print(strPM);
+
+    showCursor();
+    goTo(22);
+
+    break;
+  case 0x002211:
+    //set clock date / day
+    //show cursor at day
+    Serial1.print(strDateH);
+    //Serial1.print("Mon 3_ Dec 12");
+    selectLineTwo();
+    Serial1.print(weekdayStr[tDay]);
+    Serial1.print(" ");
+    Serial1.print(tDate);
+    Serial1.print(" ");
+    Serial1.print(monthStr[tMonth]);
+    Serial1.print(" ");
+    Serial1.print(tYear);
+
+    showCursor();
+    goTo(21);
+
+    break;
+  case 0x002212:
+    //set cycle mode fade time
+    //show cursor
+    Serial1.print(strFT);
+    selectLineTwo();
+    Serial1.print(cycf,DEC);
+    Serial1.print(strSec);
+    showCursor();
+    goTo(17);
+    break;
+  case 0x003212:
+    //set cycle mode steps
+    //show cursor
+    Serial1.print(strST);
+    selectLineTwo();
+    Serial1.print(cycs,DEC);
+    showCursor();
+    goTo(18);
+    break; 
+  case 0x002312:
+    //set randome mode fade time
+    //show cursor
+    Serial1.print(strFT);
+    selectLineTwo();
+    Serial1.print(rndf,DEC);
+    Serial1.print(strSec);
+    showCursor();
+    goTo(17);
+    break;
+  case 0x002412:
+    //set solid mode color sat
+    //show cursor
+    Serial1.print("Saturation");
+    selectLineTwo();
+    Serial1.print(sols,DEC);
+    showCursor();
+    goTo(18);
+    break;
+  case 0x003111:
+    //set clock time am/pm
+    //show cursor
+    Serial1.print(strTimeH);
+    selectLineTwo();
+    if (tHour12 < 10) Serial1.print(strPad0);
+    Serial1.print(tHour12);
+    Serial1.print("   ");
+    if(tMinute < 10) Serial1.print(strPad0);
+    Serial1.print(tMinute);
+    if(tHour<12) Serial1.print(strAM);
+    if(tHour>=12) Serial1.print(strPM);
+
+    showCursor();
+    goTo(26);
+
+    break;
+  case 0x003121:
+    //set alarm am/pm
+    //show cursor at AM
+    Serial1.print(strTimeH);
+    selectLineTwo();
+    if (almhr < 10) Serial1.print(strPad0);
+    Serial1.print(almhr);
+    Serial1.print("   ");
+    if(almmn < 10) Serial1.print(strPad0);
+    Serial1.print(almmn);
+    if(almAM) Serial1.print(strAM);
+    if(!almAM)Serial1.print(strPM);
+
+    showCursor();
+    goTo(26);
+
+    break;
+  case 0x003211:
+    //set clock date / month
+    //show cursor at month
+    Serial1.print(strDateH);
+    selectLineTwo();
+    Serial1.print(weekdayStr[tDay]);
+    Serial1.print(" ");
+    Serial1.print(tDate);
+    Serial1.print(" ");
+    Serial1.print(monthStr[tMonth]);
+    Serial1.print(" ");
+    Serial1.print(tYear);
+    showCursor();
+    goTo(25);
+    break;
+  case 0x004211:
+    //set clock date / year
+    //show cursor at year
+    Serial1.print(strDateH);
+    selectLineTwo();
+    Serial1.print(weekdayStr[tDay]);
+    Serial1.print(" ");
+    Serial1.print(tDate);
+    Serial1.print(" ");
+    Serial1.print(monthStr[tMonth]);
+    Serial1.print(" ");
+    Serial1.print(tYear);
+
+    showCursor();
+    goTo(28);
+
+    break;
+  default:
+    break;
+  }
+
+  //  backLightBr(getLCDBrightness());
+
+}
+
+void Lamp::Wake()
+{
+  _idleTime=0;
+  updateMenuIndex('t');
+  // if (_sleeping == true) backLightBr(getLCDBrightness());
+  this->_sleeping = false;
+  drawMenu(menuPosition());
+  
+}
+
+void Lamp::Sleep()
+{
+ // updateMenuIndex('t');
+//  if (_sleeping == false) backlightOff();
+//  this->_sleeping = true;
+
+}
+
+void Lamp::LampStatus(bool isOn)
+{
+  this->_lampOn = isOn;
+  //Serial1.print("Lamp status:");
+  //  Serial1.print(this->_lampOn);
+  drawMenu(menuPosition());
+}
+#pragma endregion Core
+
+
+#pragma region GET/SET
+
+
+unsigned char Lamp::getDisplayMode()
+{
+  return EEPROM.read(_lmpdsp);
+}
+
+unsigned char Lamp::getAudioFadeSpeed()
+{
+  return EEPROM.read(_lmpauf);
+}
+
+unsigned char Lamp::getLCDBrightness()
+{
+//  return EEPROM.read(_lmpbl);
+}
+
+unsigned char Lamp::getLampBrightness()
+{
+  return EEPROM.read(_lmpbr);
+}
+
+unsigned char Lamp::getCycleFadeTime()
+{
+  return EEPROM.read(_lmpcyf);
+}
+
+unsigned char Lamp::getCycleHoldTime()
+{
+  return EEPROM.read(_lmpcyh);
+}
+unsigned char Lamp::getCycleSteps()
+{
+  return EEPROM.read(_lmpcys);
+}
+unsigned char Lamp::getRandomFadeTime()
+{
+  return EEPROM.read(_lmprndf);
+}
+
+unsigned char Lamp::getRandomHoldTime()
+{
+  return EEPROM.read(_lmprndh);
+}
+
+unsigned char Lamp::getLCDSleepTime()
+{
+  return EEPROM.read(_lmpsl);
+}
+
+unsigned char Lamp::getColorHue()
+{
+  return EEPROM.read(_lmpsohue);
+}
+
+unsigned char Lamp::getColorSat()
+{
+  return EEPROM.read(_lmpsosat);
+}
+
+unsigned char Lamp::getAlarmAM()
+{
+  return EEPROM.read(_clkalam);
+}
+
+unsigned char Lamp::getAlarmHour()
+{
+  return EEPROM.read(_clkalhr);
+}
+
+unsigned char Lamp::getAlarmMin()
+{
+  return EEPROM.read(_clkalmin);
+}
+
+unsigned char Lamp::getAlarmOn()
+{
+  return EEPROM.read(_clkalon);
+}
+
+void Lamp::setDisplayMode(unsigned char b)
+{
+  EEPROM.write(_lmpdsp,b);
+}
+void Lamp::setAudioFadeSpeed(unsigned char b)
+{
+  EEPROM.write(_lmpauf,b);
+}
+void Lamp::setLCDBrightness(unsigned char b)
+{
+ // EEPROM.write(_lmpbl,b);
+  //  backLightBr(b);
+}
+void Lamp::setLampBrightness(unsigned char b)
+{
+  EEPROM.write(_lmpbr,b);
+}
+void Lamp::setCycleFadeTime(unsigned char b)
+{
+  EEPROM.write(_lmpcyf,b);
+}
+void Lamp::setCycleHoldTime(unsigned char b)
+{
+  EEPROM.write(_lmpcyh,b);
+}
+void Lamp::setCycleSteps(unsigned char b)
+{
+  EEPROM.write(_lmpcys,b);
+}
+void Lamp::setRandomFadeTime(unsigned char b)
+{
+  EEPROM.write(_lmprndf,b);
+}
+void Lamp::setRandomHoldTime(unsigned char b)
+{
+  EEPROM.write(_lmprndh,b);
+}
+void Lamp::setLCDSleepTime(unsigned char b)
+{
+  EEPROM.write(_lmpsl,b);
+}
+void Lamp::setColorHue(unsigned char b)
+{
+  EEPROM.write(_lmpsohue,b);
+}
+void Lamp::setColorSat(unsigned char b)
+{
+  EEPROM.write(_lmpsosat,b);
+}
+void Lamp::setAlarmAM(unsigned char b)
+{
+  EEPROM.write(_clkalam,b);
+}
+void Lamp::setAlarmHour(unsigned char b)
+{
+  EEPROM.write(_clkalhr,b);
+}
+void Lamp::setAlarmMin(unsigned char b)
+{
+  EEPROM.write(_clkalmin,b);
+}
+void Lamp::setAlarmOn(unsigned char b)
+{
+  EEPROM.write(_clkalon,b);
+}
+#pragma endregion GET/SET
+
+
+#pragma region Lamp
+long Lamp::hsbToRGB(unsigned char h, unsigned char s, unsigned char b)
+{
+
+  float fH = (float(h) /255.00f)*360.0f;
+  if (fH == 360) fH = 0;
+  float fS = float(s) / 255.00f;
+  float fB = float(b) / 255.00f;
+  float R,G,B;
+  byte cR,cG,cB;
+  int i;
+  float f,p,q,t;
+
+  if (fS ==0 )
+  {
+    cR = cG = cB = fB;
+  }
+  else
+  {
+    fH /= 60;
+    i = floor(fH);
+
+    f = fH-i;
+    p = fB * (1-fS);
+    q = fB * (1-fS*f);
+    t = fB * (1-fS * (1-f));
+
+    switch(i){
+    case 0:
+      R = fB;
+      G = t;
+      B = p;
+      break;
+    case 1:
+      R = q;
+      G = fB;
+      B = p;
+      break;
+    case 2:
+      R = p;
+      G = fB;
+      B = t;
+      break;
+    case 3:
+      R = p;
+      G = q;
+      B = fB;
+      break;
+    case 4:
+      R = t;
+      G = p;
+      B = fB;
+      break;
+    default:        // case 5:
+      R = fB;
+      G = p;
+      B = q;
+      break;
+    }
+
+    cR = byte(R*255);
+    cG = byte(G*255);
+    cB = byte(B*255);
+  }
+
+  long color = 0x0;
+  color = cR;
+  color = color << 8;
+  color |= cG;
+  color = color << 8;
+  color |= cB;
+  color &= 0xFFFFFF;
+  
+  return color;
+
+}
+
+long *Lamp::ledColors()
+{
+  return this->_ledColors;
+}
+
+void Lamp::drawSolid()
+{
+  _ledColors[0] = hsbToRGB(getColorHue() ,getColorSat(),getLampBrightness());
+  _ledColors[1] = hsbToRGB(getColorHue() ,byte(getColorSat()/1.5f),getLampBrightness());
+}
+void Lamp::drawCycle()
+{
+
+  long hTime;
+  long fTime;
+  
+  
+       switch (getDisplayMode())
+      {
+      case lCYCLE:
+       hTime = getCycleHoldTime();
+       fTime = getCycleFadeTime();
+      break;
+      case lRANDOM:
+       hTime = getRandomHoldTime();
+       fTime = getRandomFadeTime();      
+    break;
+    default:
+    break;
+     }
+  
+  
+  long totalCycleLen = (hTime + fTime)*1000;
+  totalCycleLen &=0x0000FFFF;
+  long _step = millis() % totalCycleLen;
+
+  //end of cycle;
+  if (_step == hTime*1000)
+  {
+    
+     switch (getDisplayMode())
+      {
+        case lCYCLE:
+        _targetHue += getCycleSteps();  
+      break;
+      case lRANDOM:
+        _targetHue += random(-128,128);
+      
+    break;
+    default:
+    break;
+     }
+Serial.println(_targetHue);
+    
+    
+    
+    _fadeDirection =0;
+    _fadeSteps = 0;
+
+    unsigned char _tmp = 0;
+    unsigned char _a = _currentHue;
+    while (_a != _targetHue)
+    {
+      _a++;
+      _tmp++;
+    }
+    _fadeSteps = _tmp;
+    _fadeDirection = 1;
+
+    _tmp = 0;
+    _a = _currentHue;
+    while (_a != _targetHue)
+    {
+      _a--;
+      _tmp++;
+    }
+
+    if (_tmp < _fadeSteps)
+    {
+      _fadeSteps = _tmp;
+      _fadeDirection = -1;
+    }
+  }
+  //fade
+  else if (_step >= hTime*1000)
+  {
+    if (_currentHue != _targetHue)
+    {
+      long incStep =(fTime*1000)/_fadeSteps ;
+      if (_step % incStep < _prevSubStep) _currentHue+= _fadeDirection;
+      _prevSubStep = _step % incStep;
+    }
+  }
+
+  _ledColors[0] = hsbToRGB(getColorHue() +_currentHue,getColorSat(),getLampBrightness());
+  _ledColors[1] = hsbToRGB(byte(getColorHue() +_currentHue  - (getCycleSteps()*PI)),byte(getColorSat()/1.5f),getLampBrightness());
+
+  _prevStep = _step;
+
+}
+
+void Lamp::drawRandom()
+{/*
+  long totalCycleLen = (getRandomHoldTime() + getRandomFadeTime())*1000;
+  totalCycleLen &=0x0000FFFF;
+  long _step = millis() % totalCycleLen;
+
+  //end of cycle;
+  if (_step == getRandomHoldTime()*1000)
+  {
+    _targetHue += random(-128,128);
+    _fadeDirection =0;
+    _fadeSteps = 0;
+
+    unsigned char _tmp = 0;
+    unsigned char _a = _currentHue;
+    while (_a != _targetHue)
+    {
+      _a++;
+      _tmp++;
+    }
+    _fadeSteps = _tmp;
+    _fadeDirection = 1;
+
+    _tmp = 0;
+    _a = _currentHue;
+    while (_a != _targetHue)
+    {
+      _a--;
+      _tmp++;
+    }
+
+    if (_tmp < _fadeSteps)
+    {
+      _fadeSteps = _tmp;
+      _fadeDirection = -1;
+    }
+
+
+
+  }
+  //fade
+  else if (_step > getRandomHoldTime()*1000)
+  {
+    if (_currentHue != _targetHue)
+    {
+      long incStep =(getRandomFadeTime()*1000)/_fadeSteps ;
+      if (_step % incStep < _prevSubStep) _currentHue+= _fadeDirection;
+      _prevSubStep = _step % incStep;
+    }
+  }
+
+
+  _ledColors[0] = hsbToRGB(getColorHue() +_currentHue,getColorSat(),getLampBrightness());
+  _ledColors[1] = hsbToRGB(byte(getColorHue() +_currentHue  - (getCycleSteps()*(PI*1.0f))),byte(getColorSat()/1.5f),getLampBrightness());
+  _prevStep = _step;
+  */
+  drawCycle();
+}
+
+
+void Lamp::drawAudio()
+{
+  /*
+  long totalCycleLen =getAudioFadeSpeed()*4;
+   totalCycleLen &=0x0000FFFF;
+   long _step = millis() % totalCycleLen;
+   
+   if (_step % 1 == 0)
+   {
+   if (_sampleStep ==0)
+   {
+   
+   sampleDone = false;
+   dBavg=0;
+   //  fVal =0;
+   //  fSum =0;
+   }
+   if (_sampleStep <64 && !sampleDone)
+   {
+   int val = map(analogRead(audPin),0,1023,0,512);
+   val = constrain(val,0,512);
+   
+   fSum = fSum - fVal + val; 
+   fVal = fSum >> 2;
+   
+   // if (val == 0 ) val = 128;
+   data[_sampleStep] = fVal;
+   dBavg+=val;
+   _sampleStep++;
+   }
+   else if (_sampleStep == 64)
+   {
+   dBavg = dBavg /  64.0f;
+   dBavg = 20.0f * log10(dBavg/512.001f);
+   
+   if (dBavg < peak) peak = dBavg;
+   //  Serial.print(dBavg);
+   //  Serial.print(", ");
+   //  for (int i=0; i<64; i++)
+   //  {
+   //    Serial.print(data[i],DEC); 
+   //    Serial.print(", ");
+   //  }
+   //  Serial.print("0");
+   
+   sampleDone = true;
+   _sampleStep =0;
+   
+   }
+   }
+   if (_step == 1 )
+   {
+   
+   
+   _targetHue =map(dBavg,peak,0,0,255); 
+   // Serial.print(dBavg);
+   // Serial.print(peak);
+   // Serial.print(_targetHue);
+   
+   _targetSat =getColorSat(); // byte( float(mVal/5.0f)*254);
+   _targetBr  = _targetSat;
+   
+   _fadeDirection =0;
+   _fadeSteps = 0;
+   
+   unsigned char _tmp = 0;
+   unsigned char _a = _currentHue;
+   while (_a != _targetHue)
+   {
+   _a++;
+   _tmp++;
+   }
+   _fadeSteps = _tmp;
+   _fadeDirection = 1;
+   
+   _tmp = 0;
+   _a = _currentHue;
+   while (_a != _targetHue)
+   {
+   _a--;
+   _tmp++;
+   }
+   
+   if (_tmp < _fadeSteps)
+   {
+   _fadeSteps = _tmp;
+   _fadeDirection = -1;
+   }
+   
+   
+   if (_targetSat > _currentSat) _fadeStepsSat = _targetSat - _currentSat;
+   if (_targetSat < _currentSat) _fadeStepsSat = _currentSat - _targetSat;
+   if (_targetBr > _currentBr) _fadeStepsBr = _targetBr - _currentBr;
+   if (_targetBr < _currentBr) _fadeStepsBr = _currentBr - _targetBr;  
+   
+   }
+   else if (_step >= 2)
+   {
+   
+   if (_currentHue != _targetHue)
+   {
+   long incStep =(getAudioFadeSpeed())/_fadeSteps ;
+   if (_step % incStep < _prevSubStep) _currentHue+= _fadeDirection;
+   _prevSubStep = _step % incStep;
+   
+   }
+   if (_currentSat != _targetSat)
+   {
+   long incStep =(getAudioFadeSpeed())/_fadeStepsSat ;
+   if (_step % incStep < _prevSubStep1 && _targetSat > _currentSat) _currentSat++;
+   if (_step % incStep < _prevSubStep1 && _targetSat < _currentSat) _currentSat--;
+   _prevSubStep1 = _step % incStep;
+   }
+   if (_currentBr != _targetBr)
+   {
+   long incStep =(getAudioFadeSpeed())/_fadeStepsBr ;
+   if (_step % incStep < _prevSubStep2 && _targetBr > _currentBr) _currentBr++;
+   if (_step % incStep < _prevSubStep2 && _targetBr < _currentBr) _currentBr--;
+   _prevSubStep2 = _step % incStep;
+   }
+   
+   _ledColors[0] = hsbToRGB(getColorHue() +_currentHue,getColorSat(),getLampBrightness());
+   _ledColors[1] = hsbToRGB(byte(getColorHue() +_currentHue  - (getCycleSteps()*PI)),byte(getColorSat()/1.5f),getLampBrightness());
+   _prevStep = _step;
+   }
+   */
+}
+
+float log10 (float x) {
+  return (log(x) / log(10.00f) );
+}
+#pragma endregion Lamp
+
+//#define  _clkh      0x300    //clock hour adjust
+//#define  _clkm      0x301    //clock min adjust
+//#define  _clkd      0x302    //clock day adjust
+//#define  _clkw      0x303    //clock weekday adjust
+//#define  _clkM      0x304    //clock month adjust
+//#define  _clky      0x305    //clock year adjust   +/- 2000
+//#define  _clka      0x306    //clock am/pm adjust
+
+
+
+
+// Starts the cursor at the beginning of the first line (convienence method for goTo(0))
+void Lamp::selectLineOne() {  //puts the cursor at line 0 char 0.
+  serCommand();   //command flag
+  Serial1.write(128);    //position
+}
+
+// Starts the cursor at the beginning of the second line (convienence method for goTo(16))
+void Lamp::selectLineTwo() {  //puts the cursor at line 0 char 0.
+  serCommand();   //command flag
+  Serial1.write(192);    //position
+}
+
+// Sets the cursor to the given position 
+// line 1: 0-15, line 2: 16-31, 31+ defaults back to 0
+void Lamp::goTo(int position) {
+  if (position < 16) { 
+    serCommand();   //command flag
+    Serial1.write((position+128));
+  } 
+  else if (position < 32) {
+    serCommand();   //command flag
+    Serial1.write((position+48+128));
+  } 
+  else { 
+    goTo(0); 
+  }
+}
+
+// Resets the display, undoing any scroll and removing all text
+void Lamp::clearLCD() {
+  serCommand();
+  Serial1.write(0x01);
+
+}
+
+// Turns the backlight on
+void Lamp::backlightOn() {
+  //  backLightBr(getLCDBrightness());
+}
+
+// Turns the backlight off
+void Lamp::backlightOff() {
+  Serial1.write(0x7C);
+  Serial1.write(128);
+
+}
+
+//void Lamp::backLightBr(unsigned char b)
+//{
+//  unsigned char br =map(b,0,255,128,156);
+//  br = constrain(br,129,157);
+
+
+// Serial1.write(0x7C);
+//  Serial1.print(br);
+//  Serial.println(br,DEC);
+
+//}
+
+void Lamp::showCursor()
+{
+  serCommand();
+  Serial1.write(0x0E);
+
+}
+
+void Lamp::hideCursor()
+{
+  serCommand();
+  Serial1.write(0x0C);
+
+}
+
+// Initiates a function command to the display
+void Lamp::serCommand() {
+  Serial1.write(254);
+}
+
+
+
+
+
+
+
+void Lamp::getDate(){
+
+  // Reset the register pointer
+
+   /*
+   tSecond = 30;
+   tMinute = 30;
+   tHour = 10;
+   tDay=2;
+   tDate = 5;
+   tMonth = 2;
+  tYear = 13; 
+  
+  
+    Wire.beginTransmission(DS1307_ADDRESS);
+
+  Wire.write(0x00);
+  Wire.endTransmission();
+
+  Wire.requestFrom(DS1307_ADDRESS, 7);
+
+  byte second =      45; //0-59
+  byte minute =      40; //0-59
+  byte hour =        0; //0-23
+  byte weekDay =     2; //1-7
+  byte monthDay =    1; //1-31
+  byte month =       3; //1-12
+  byte year  =       11; //0-99
+
+   tSecond = bcdToDec(Wire.read());
+    tMinute = bcdToDec(Wire.read());
+   tHour = bcdToDec(Wire.read() & 0b111111); //24 hour time
+    tDay = bcdToDec(Wire.read()); //0-6 -> sunday - Saturday
+    tDate = bcdToDec(Wire.read());
+    tMonth =bcdToDec(Wire.read());
+    tYear = bcdToDec(Wire.read());
+   
+   
+  //print the date EG   3/1/11 23:59:59
+ 
+  Serial.print(tMonth);
+   Serial.print("/");
+   Serial.print(tDate);
+   Serial.print("/");
+   Serial.print(tYear);
+   Serial.print(" ");
+   Serial.print(tHour);
+   Serial.print(":");
+   Serial.print(tMinute);
+   Serial.print(":");
+   Serial.println(tSecond);
+  */
+   
+}
+
+void Lamp::setDateTime(){
+
+  byte second =      0;
+  byte minute =      tMinute;
+  byte hour =        tHour;
+  byte weekDay =     tDay;
+  byte monthDay =    tDate;
+  byte month =       tMonth;
+  byte year  =       tYear;
+
+
+  Wire.beginTransmission(DS1307_ADDRESS);
+  Wire.write(0x00); //stop Oscillator
+
+  Wire.write(decToBcd(second));
+  Wire.write(decToBcd(minute));
+  Wire.write(decToBcd(hour));
+  Wire.write(decToBcd(weekDay-1));
+  Wire.write(decToBcd(monthDay));
+  Wire.write(decToBcd(month));
+  Wire.write(decToBcd(year));
+
+  Wire.write(0x00); //start 
+  Wire.endTransmission();
+
+
+
+ Wire.beginTransmission(DS1307_ADDRESS);
+
+  Wire.write(0x00);
+  Wire.endTransmission();
+
+  Wire.requestFrom(DS1307_ADDRESS, 7);
+
+
+
+    tSecond = bcdToDec(Wire.read());
+    tMinute = bcdToDec(Wire.read());
+    tHour = bcdToDec(Wire.read() & 0b111111); //24 hour time
+    tDay = bcdToDec(Wire.read()); //0-6 -> sunday - Saturday
+    tDate = bcdToDec(Wire.read());
+    tMonth =bcdToDec(Wire.read());
+    tYear =bcdToDec(Wire.read());
+   tHour12 = tHour;
+  if (tHour > 12)   tHour12 = tHour-12;
+   
+  //print the date EG   3/1/11 23:59:59
+ 
+   Serial.print(tMonth);
+   Serial.print("/");
+   Serial.print(tDate);
+   Serial.print("/");
+   Serial.print(tYear);
+   Serial.print(" ");
+   Serial.print(tHour);
+   Serial.print(":");
+   Serial.print(tMinute);
+   Serial.print(":");
+   Serial.println(tSecond);
+
+
+}
+
+byte Lamp::decToBcd(byte val){
+  // Convert normal decimal numbers to binary coded decimal
+  return ( (val/10*16) + (val%10) );
+}
+
+byte Lamp::bcdToDec(byte val)  {
+  // Convert binary coded decimal to normal decimal numbers
+  return ( (val/16*10) + (val%16) );
+}
+
+
+
+
+
+

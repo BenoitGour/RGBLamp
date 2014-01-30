@@ -1,0 +1,275 @@
+
+#include <Metro.h>
+/*
+
+ RGB Lamp
+ by Benoit Gour
+ v0.1
+ 
+ 16,130 bytes
+ 16,270
+ 16,254
+ 16,706
+ 
+ 19,448
+ 19,376
+ 
+ id     id dec	text                	common name             value range/type	var / eeprom adr(000 - 3ff)
+ 003121	12577	AM/PM               	clock.alarm.am          bool                clkalam / 010
+ 001121	4385	Hour                	clock.alarm.hour        byte 0-23           clkalhr /  011
+ 002121	8481	Min                 	clock.alarm.min         byte 0-59           clkalmin / 012
+ 001221	4641	ON - OFF            	clock.alarm.on          bool                clkalon / 013
+ 003111	12561	AM/PM               	clock.time.am           bool                clktmam / calc
+ 002211	8721	D.                  	clock.time.day          byte 1-31           clktmd / rtc
+ 001211	4625	d.                  	clock.time.dayofweek	byte 1-7            clktmdw / rtc
+ 001111	4369	Hour                	clock.time.hour         byte 0-23           clktmhr / rtc
+ 002111	8465	Min                 	clock.time.min          byte 0-59           clktmmin / rtc
+ 003211	12817	M.                  	clock.time.month        byte 1-12           clktmmo / rtc
+ 004211	16913	Y.                  	clock.time.year         byte 0-99           clktmy / rtc
+ 000112	274     Audio Viz.          	lamp.display.mode       byte =0              dispmode / 001	
+ 001112	4370	Fade Speed          	lamp.audio.fade         byte 0 -255         lmpauf / 021   val * 4  (0 - 1020)ms
+ 000132	306     LCD Backlight       	lamp.backlight.value	byte 0-255          lmpbl / 022
+ 000122	290     Brightness          	lamp.brightness.value	byte 0-255          lmpbr / 023
+ 002212	8722	Fade Time           	lamp.cycle.fade         byte 1-90           lmpcyf / 024
+ 001212	4626	Hold Time           	lamp.cycle.hold         byte 1-90           lmpcyh /  025
+ 000212	530     Cycle               	lamp.display.mode       byte = 1            lmpdsp / 001
+ 000312	786     Random              	lamp.display.mode       byte = 2            lmpdsp / 001
+ 000412	1042	Solid               	lamp.display.mode       byte =3             lmpdsp / 001
+ 002312	8978	Fade Time               lamp.random.fade        byte 1-90           lmprndf / 026
+ 001312	4882	Hold Time           	lamp.random.hold        byte 1-90           lmprndh / 027
+ 000142	322     LCD Sleep           	lamp.sleep.value        byte 1-90           lmpsl / 028
+ 001412	5138	Color (H)           	lamp.solid.hue          byte 0-255          lmpsohue / 029
+ 002412	9234	Color (S)           	lamp.solid.sat          byte 0-255          lmpsosat / 02A
+ 000000	0       TIME                	top menu
+ 000001	1       Clock Settings      	menu
+ 000002	2       Lamp Settings       	menu
+ 000011	17      Set Date/Time       	menu
+ 000012	18      Display Mode        	menu
+ 000021	33      Set Alarm           	menu
+ 000022	34      Brightness          	menu
+ 000032	50      LCD Backlight       	menu
+ 000042	66      LCD Sleep           	menu
+ 000111	273     Hour Min. AM/PM     	menu clock
+ 000121	289     Hour Min. AM/PM     	menu alarm
+ 000211	529     d. D. M. Y.         	menu clock date
+ 000221	545     Alarm ON/OFF        	menu alarm on off
+ 
+ 
+ color = long  0xFFFFFF
+ 
+ 
+ */
+
+#ifndef Lamp_h
+#define Lamp_h
+
+#include <inttypes.h>
+/*
+  Global Settings and their EEPROM Address
+ */
+#define  _defaultSettings 0x001
+#define  _lmpauf    0x021    //audio fade speed
+#define  _lmpbl     0x022    //lcd brightness
+#define  _lmpbr     0x023    //lamp brightness
+#define  _lmpcyf    0x024    //cycle fade
+#define  _lmpcyh    0x025    //cycle hold
+#define  _lmpdsp    0x002    //display mode
+#define  _lmprndf   0x026    //random fade
+#define  _lmprndh   0x027    //random hold
+#define  _lmpsl     0x028    //lcd sleep
+#define  _lmpsohue  0x029    //color hue
+#define  _lmpsosat  0x02A    //color saturation
+#define  _lmpcys    0x02B    //Cycle Steps
+
+#define  _clkalam   0x010    //alarm AM/PM
+#define  _clkalhr   0x011    //alarm Hour
+#define  _clkalmin  0x012    //alarm Min
+#define  _clkalon   0x013    //alarm On/Off
+
+
+#define  _clkh      0x100    //clock hour adjust
+#define  _clkm      0x101    //clock min adjust
+#define  _clkd      0x102    //clock day adjust
+#define  _clkw      0x103    //clock weekday adjust
+#define  _clkM      0x104    //clock month adjust
+#define  _clky      0x105    //clock year adjust   +/- 2000
+#define  _clka      0x106    //clock am/pm adjust
+
+#define DS1307_ADDRESS 0x68
+
+//display modes
+enum displayMode {
+  lAUDIO = 0, lCYCLE = 1, lRANDOM = 2,lSOLID =3 };
+
+#define numberOfLeds 2
+
+
+
+class Lamp
+{
+public:
+  Lamp(unsigned char ledPin, unsigned char audioPin);
+
+  bool isInit();
+  bool isSleeping();
+  bool isLampOn();
+
+  void update();
+  void readSerial(char data[], unsigned char buffLen);
+  unsigned long menuPosition();    
+  unsigned char menuDepth();
+  void drawMenu(unsigned long index);
+  void updateMenuIndex(unsigned char dir);
+
+  void Wake();
+  void Sleep();
+  void LampStatus(bool isOn);
+  unsigned char getDisplayMode();
+  unsigned char getLCDBrightness();
+  unsigned char getLampBrightness();
+  unsigned char getCycleFadeTime();
+  unsigned char getCycleHoldTime();
+  unsigned char getCycleSteps();
+  unsigned char getRandomFadeTime();
+  unsigned char getRandomHoldTime();
+  unsigned char getColorHue();
+  unsigned char getColorSat();
+
+  unsigned char getAlarmAM();
+  unsigned char getAlarmHour();
+  unsigned char getAlarmMin();
+  unsigned char getAlarmOn();
+
+  void setDisplayMode(unsigned char b);
+  void setLCDBrightness(unsigned char b);
+  void setLampBrightness(unsigned char b);
+  void setCycleFadeTime(unsigned char b);
+  void setCycleHoldTime(unsigned char b);
+  void setCycleSteps(unsigned char b);
+  void setRandomFadeTime(unsigned char b);
+  void setRandomHoldTime(unsigned char b);
+  void setColorHue(unsigned char b);
+  void setColorSat(unsigned char b);
+
+  void setAlarmAM(unsigned char b);
+  void setAlarmHour(unsigned char b);
+  void setAlarmMin(unsigned char b);
+  void setAlarmOn(unsigned char b);
+
+  void eepromDmp();
+  void toggleDSP();
+
+  long *ledColors();
+
+
+  void selectLineOne();
+  void selectLineTwo();
+  void goTo(int position);
+  void clearLCD();
+  void backlightOn();
+  void backlightOff();
+ // void backLightBr(unsigned char b);
+  void serCommand();
+
+  void showCursor();
+  void hideCursor();
+
+
+  void getDate();
+  void setDateTime();
+  
+  unsigned char decToBcd(unsigned char  val);
+  unsigned char  bcdToDec(unsigned char  val);
+
+  short tSecond;
+  short tMinute;
+  short tHour;
+  short tHour12;
+  short tDay;
+  short tDate;
+  short tMonth;
+  short tYear;
+  bool _alarming;
+  unsigned char ambBrightness;
+  int  _idleTime;
+private:
+
+
+  void doLed();
+
+  unsigned char lpin;
+  unsigned char audPin;
+
+  bool LEDCycleRising;
+  unsigned char LEDPWM;
+  long cycleStep;
+
+  bool _sleeping;
+  bool _lampOn;
+  bool _dsp;
+
+
+  unsigned char _menuDepth;
+  unsigned long _menuIndex;
+  unsigned char _menuCurrent;
+
+  enum displayMode _displayMode;
+  unsigned char _sleep;
+  long          _ledColors[numberOfLeds];
+
+  Metro fadeTimer;
+
+  // float hueToRGB(float p, float q, float t);
+  long hsbToRGB(unsigned char h, unsigned char s, unsigned char b);
+
+  unsigned char _prevHue;
+  char          _prevDirection;
+  unsigned char _currentHue;
+  unsigned char _targetHue;
+  unsigned char _fadeSteps;
+
+  unsigned char _targetSat;
+  unsigned char _targetBr;
+  unsigned char _currentSat;
+  unsigned char _currentBr;
+  unsigned char _fadeStepsSat;
+  unsigned char _fadeStepsBr;
+
+  long _prevStep;
+  long _prevSubStep;
+  long _prevSubStep1;
+  long _prevSubStep2;
+  char _fadeDirection;
+
+  void drawAudio();
+  void drawSolid();
+  void drawCycle();
+  void drawRandom();
+  void drawAlarm();
+
+  //audio buffer
+  //  char im[256];
+/*
+  int data[128]; 
+  float dBavg;
+  bool sampleDone;
+  Metro audioTimer;
+  unsigned char _sampleStep;
+  short peak;
+  short fVal;
+  short fSum;
+*/
+  short lastMin;
+  unsigned char  tAlarmStarted;
+  
+  bool _stepped;
+
+};
+
+
+#endif
+
+
+
+
+
